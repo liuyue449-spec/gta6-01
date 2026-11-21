@@ -2,7 +2,7 @@
 
 [![make.fun · gta6-01](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 [![rank](https://make.fun/badge/gta6-01/liuyue449-spec/gta6-01/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
-[![reward](https://make.fun/badge/gta6-01/liuyue449-spec/gta6-01/rank.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
+[![reward](https://make.fun/badge/gta6-01/liuyue449-spec/gta6-01/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 
 Sunhaven Streets — a sun-soaked 2D top-down open-world crime game, built from scratch for make.fun's "Make GTA 6" bounty. You are Alex Vega, a driver new in the coastal city of Sunhaven with a debt to clear. Explore a living city on foot and by car, steal cars, outrun the Sunhaven police across a 5-star wanted system, fight the Red Tide gang, and run 6 story missions — from your first stolen wheels, through a checkpoint run across the bay, to the big bank score — to become the King of Sunhaven.
 
