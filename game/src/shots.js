@@ -3,7 +3,10 @@
 // mission markers placed exactly where the camera can see them — then the
 // renderer paints the frame exactly as a player would see it. The same seed
 // always gives the same frame, because the world is built from that seed
-// and the staging only moves things to fixed spots.
+// and the staging only moves things to fixed spots. The scenes are dressed
+// to show the whole game at a glance: dense traffic and a patrol car on the
+// cover, a busy market street on foot, a chase with skid marks and braking
+// traffic, and the arena brawl mid-fight with one gang member already down.
 import { LANDMARKS } from './city.js';
 import { makeCar, spawnTrafficCar } from './vehicles.js';
 import { makeEnemy } from './combat.js';
@@ -38,6 +41,13 @@ function scatterTraffic(state, count, cx, cy) {
   }
 }
 
+function addParkedCars(state, cx, cy) {
+  // Two cars parked along the kerb near the camera, doors shut, going nowhere.
+  const a = makeCar(state.random, cx - 300, cy - 96, 0, { parked: true, driver: false, color: '#2ecc71' });
+  const b = makeCar(state.random, cx + 340, cy + 96, Math.PI, { parked: true, driver: false, color: '#9b59b6' });
+  state.traffic.push(a, b);
+}
+
 function scatterPeds(state, count, cx, cy) {
   for (let i = 0; i < count; i += 1) {
     const ped = state.peds[i % state.peds.length];
@@ -49,10 +59,10 @@ function scatterPeds(state, count, cx, cy) {
 
 /**
  * Set `world` to the named scene and return the screen to draw over it.
- * cover: driving through downtown with traffic and the HUD.
+ * cover: driving through downtown with traffic, a patrol car and the HUD.
  * street: on foot at Coral Market starting the courier mission.
- * chase: a 3-star police chase with cops, stars and minimap on screen.
- * mission: the arena brawl, fists out, gang members closing in.
+ * chase: a 3-star police chase with cops, skid marks, stars and minimap.
+ * mission: the arena brawl, fists out, one gang member already down.
  */
 export function stageShot(name, world) {
   const state = world.state;
@@ -62,6 +72,7 @@ export function stageShot(name, world) {
   state.cops.length = 0;
   state.bullets.length = 0;
   state.effects.length = 0;
+  state.skids.length = 0;
 
   if (name === 'street') {
     state.inCar = false;
@@ -77,27 +88,46 @@ export function stageShot(name, world) {
     startMission(state, 1);
     state.toast = 'Drop-off 1 · Coral Market — pick up the package';
     state.toastTime = 5;
-    scatterPeds(state, 12, state.player.x, state.player.y);
+    scatterPeds(state, 14, state.player.x, state.player.y);
+    addParkedCars(state, state.player.x, state.player.y);
+    const passer = spawnTrafficCar(state.random);
+    passer.x = state.player.x - 420;
+    passer.y = state.player.y - 190;
+    passer.axis = 'x';
+    passer.angle = 0;
+    passer.speed = 170;
+    state.traffic.push(passer);
     return { screen: SCREEN_PLAY };
   }
 
   if (name === 'chase') {
     state.wanted = 3;
     state.heat = 1;
+    state.playerSeen = true;
     state.money = 890;
     state.player.health = 76;
-    placePlayerInCar(state, 1750, 1750, 0, 320, '#e74c3c');
-    startMission(state, 4);
+    const hero = placePlayerInCar(state, 1750, 1750, 0, 320, '#e74c3c');
+    hero.drift = 0.7;
+    startMission(state, 5);
     state.missionStage = 2;
     state.setTarget(LANDMARKS.hideout.x, LANDMARKS.hideout.y, 'Hideout — lose the cops');
     state.toast = '3 stars! Lose the cops and reach the Hideout';
     state.toastTime = 5;
     scatterTraffic(state, 6, 1750, 1750);
+    // One traffic car ahead is braking hard to get out of the way.
+    const braking = state.traffic[0];
+    if (braking) { braking.brake = 1; braking.speed = 60; }
     for (let i = 0; i < 3; i += 1) {
       const cop = makeCar(state.random, 1750 - 260 - i * 130, 1750 + (i % 2 ? 34 : -34), 0, { isCop: true, color: '#1d4ed8', type: { name: 'Patrol', speed: 1.15, color: '#1d4ed8' } });
       cop.speed = 480;
       state.cops.push(cop);
     }
+    // The hero car has just swung through the junction: a fan of skid marks.
+    for (let i = 0; i < 14; i += 1) {
+      state.skids.push({ x: 1750 - 40 - i * 16, y: 1750 + 26 + Math.sin(i * 0.5) * 14, t: 5.5 - i * 0.2 });
+      state.skids.push({ x: 1750 - 40 - i * 16, y: 1750 - 26 + Math.sin(i * 0.5) * 14, t: 5.5 - i * 0.2 });
+    }
+    state.effects.push({ kind: 'crash', x: 1750 - 210, y: 1750 - 60, t: 0.45 });
     scatterPeds(state, 6, 1750, 1750);
     return { screen: SCREEN_PLAY };
   }
@@ -120,6 +150,13 @@ export function stageShot(name, world) {
       const angle = (i / 4) * Math.PI * 2;
       state.enemies.push(makeEnemy(state.random, state.player.x + Math.cos(angle) * 150, state.player.y + Math.sin(angle) * 130, 100));
     }
+    // The fight is already on: one is down, one is reeling, cash spilled.
+    state.enemies[0].state = 'down';
+    state.enemies[0].hp = 0;
+    state.enemies[1].hp = 34;
+    state.enemies[1].state = 'hurt';
+    state.enemies[1].hurtTime = 0.3;
+    state.pickups.push({ x: state.player.x + 90, y: state.player.y - 60, kind: 'cash', taken: false });
     state.effects.push({ kind: 'punch', x: state.player.x + 40, y: state.player.y, t: 0.4 });
     state.toast = 'Arena Brawl — take all 4 gang members down!';
     state.toastTime = 5;
@@ -129,6 +166,7 @@ export function stageShot(name, world) {
   // Default: cover — driving downtown at speed, city and HUD on show.
   state.wanted = 1;
   state.heat = 1;
+  state.playerSeen = false;
   state.money = 320;
   state.player.health = 100;
   placePlayerInCar(state, 1250, 1750, 0, 300, '#f1c40f');
@@ -137,7 +175,11 @@ export function stageShot(name, world) {
   state.setTarget(LANDMARKS.garage.x, LANDMARKS.garage.y, "Rico's Garage");
   state.toast = 'Nice wheels! Bring the car to Rico\'s Garage';
   state.toastTime = 5;
-  scatterTraffic(state, 9, 1250, 1750);
+  scatterTraffic(state, 11, 1250, 1750);
+  // A patrol car cruises the far side of the junction, lights ready.
+  const patrol = makeCar(state.random, 1250 + 430, 1750 - 190, Math.PI, { isCop: true, color: '#1d4ed8', type: { name: 'Patrol', speed: 1.15, color: '#1d4ed8' } });
+  patrol.speed = 200;
+  state.cops.push(patrol);
   scatterPeds(state, 10, 1250, 1750);
   return { screen: SCREEN_PLAY };
 }

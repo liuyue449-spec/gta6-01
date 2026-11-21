@@ -1,7 +1,8 @@
 // Keyboard and mouse input. Held keys give movement and driving; one-shot
-// presses (confirm, pause, enter car, punch, shoot, save) are queued as bit
-// flags and taken once by the loop, so a press between two frames is never
-// lost and never counted twice.
+// presses (confirm, pause, enter car, punch, shoot, save, buy) are queued
+// as bit flags and taken once by the loop, so a press between two frames is
+// never lost and never counted twice. Shift does double duty: sprint on
+// foot, handbrake drift in a car — held.drift mirrors it for the car code.
 
 export const ACTION_CONFIRM = 1;
 export const ACTION_PAUSE = 2;
@@ -9,6 +10,7 @@ export const ACTION_ENTER = 4;
 export const ACTION_PUNCH = 8;
 export const ACTION_SHOOT = 16;
 export const ACTION_SAVE = 32;
+export const ACTION_BUY = 64;
 
 const UP = new Set(['ArrowUp', 'KeyW']);
 const DOWN = new Set(['ArrowDown', 'KeyS']);
@@ -21,9 +23,10 @@ const ENTER = new Set(['KeyE']);
 const PUNCH = new Set(['KeyF']);
 const SHOOT = new Set(['KeyG']);
 const SAVE = new Set(['KeyH']);
+const BUY = new Set(['KeyB']);
 
 export function createInput(canvas) {
-  const held = { up: false, down: false, left: false, right: false, run: false };
+  const held = { up: false, down: false, left: false, right: false, run: false, drift: false };
   let actions = 0;
   let mouseX = 0;
   let mouseY = 0;
@@ -35,13 +38,14 @@ export function createInput(canvas) {
     else if (DOWN.has(code)) held.down = true;
     else if (LEFT.has(code)) held.left = true;
     else if (RIGHT.has(code)) held.right = true;
-    else if (RUN.has(code)) held.run = true;
+    else if (RUN.has(code)) { held.run = true; held.drift = true; }
     else if (CONFIRM.has(code)) { if (!event.repeat) actions |= ACTION_CONFIRM; }
     else if (PAUSE.has(code)) { if (!event.repeat) actions |= ACTION_PAUSE; }
     else if (ENTER.has(code)) { if (!event.repeat) actions |= ACTION_ENTER; }
     else if (PUNCH.has(code)) { if (!event.repeat) actions |= ACTION_PUNCH; }
     else if (SHOOT.has(code)) { if (!event.repeat) actions |= ACTION_SHOOT; }
     else if (SAVE.has(code)) { if (!event.repeat) actions |= ACTION_SAVE; }
+    else if (BUY.has(code)) { if (!event.repeat) actions |= ACTION_BUY; }
     else return false;
     return true;
   }
@@ -54,11 +58,11 @@ export function createInput(canvas) {
     else if (DOWN.has(event.code)) held.down = false;
     else if (LEFT.has(event.code)) held.left = false;
     else if (RIGHT.has(event.code)) held.right = false;
-    else if (RUN.has(event.code)) held.run = false;
+    else if (RUN.has(event.code)) { held.run = false; held.drift = false; }
   });
   // A key released while the tab is hidden never sends keyup: let go on blur.
   window.addEventListener('blur', () => {
-    held.up = held.down = held.left = held.right = held.run = false;
+    held.up = held.down = held.left = held.right = held.run = held.drift = false;
     mouseDown = false;
   });
   canvas.addEventListener('pointerdown', (event) => {

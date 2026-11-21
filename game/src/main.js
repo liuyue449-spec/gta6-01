@@ -3,7 +3,9 @@
 // renderer paints what is there. Screens: title, play, paused, busted,
 // wasted. ?seed=N fixes the city; ?shot=cover|street|chase|mission stages
 // that scene instead of running the loop, paints it twice and sets
-// window.__shotReady for a screenshot.
+// window.__shotReady for a screenshot. The engine note only sounds while
+// Alex is actually in a car on the play screen — it is silenced everywhere
+// else, every frame, so it can never drone on over a menu.
 import { BEST_KEY, STEP } from './config.js';
 import { createRandom } from './random.js';
 import { createWorld } from './world.js';
@@ -155,6 +157,10 @@ function runGame() {
       }
     } else {
       accumulator = 0;
+    }
+    // The engine hum belongs to a running car on the play screen only.
+    if (screen !== SCREEN_PLAY || !world.state.inCar) {
+      world.state.audio.setEngine(0, false);
     }
     renderer.draw(world.state, screen);
   }

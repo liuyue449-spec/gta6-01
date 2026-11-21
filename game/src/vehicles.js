@@ -1,6 +1,7 @@
-// Cars: the player's car physics (arcade handling, drift, crash sparks) and
-// the traffic that fills the roads — each traffic car follows a road lane,
-// turns at intersections, slows for the car ahead, and honks when stuck.
+// Cars: the player's car physics (arcade handling, a Shift-key drift that
+// scrubs speed and lays skid marks, crash sparks) and the traffic that fills
+// the roads — each traffic car follows a road lane, turns at intersections,
+// slows for the car ahead with its brake lights lit, and honks when stuck.
 // Stealing a parked or traffic car is the heart of the game: E near a car
 // pulls the driver out and puts the player behind the wheel.
 import { CAR, CITY_SIZE, ROAD_CENTRES, ROAD_W } from './config.js';
@@ -30,27 +31,25 @@ export function makeCar(random, x, y, angle, opts) {
     parked: !!opts?.parked,
     stuck: 0,
     honk: 0,
+    brake: 0, // 0..1, how hard the car is braking this frame (lights in render)
+    drift: 0, // 0..1, the player's handbrake drift amount this frame
     // traffic AI: which road it follows and which way along it
     axis: opts?.axis ?? 'x',
     dir: opts?.dir ?? (random() < 0.5 ? 1 : -1),
     lane: opts?.lane ?? 0,
-    brake: 0,
   };
 }
 
 /** Spawn a parked car on a roadside, away from buildings. */
 export function spawnParkedCar(random, city) {
-  for (let tries = 0; tries < 30; tries += 1) {
-    const c = pick(random, ROAD_CENTRES);
-    const along = range(random, 150, CITY_SIZE - 150);
-    const horizontal = random() < 0.5;
-    const off = (random() < 0.5 ? -1 : 1) * (ROAD_W / 2 - 26);
-    const x = horizontal ? along : c + off;
-    const y = horizontal ? c + off : along;
-    const angle = horizontal ? (off > 0 ? 0 : Math.PI) : (off > 0 ? Math.PI / 2 : -Math.PI / 2);
-    return makeCar(random, x, y, angle, { parked: true, driver: false });
-  }
-  return makeCar(random, 750, 250 + ROAD_W / 2 - 26, 0, { parked: true, driver: false });
+  const c = pick(random, ROAD_CENTRES);
+  const along = range(random, 150, CITY_SIZE - 150);
+  const horizontal = random() < 0.5;
+  const off = (random() < 0.5 ? -1 : 1) * (ROAD_W / 2 - 26);
+  const x = horizontal ? along : c + off;
+  const y = horizontal ? c + off : along;
+  const angle = horizontal ? (off > 0 ? 0 : Math.PI) : (off > 0 ? Math.PI / 2 : -Math.PI / 2);
+  return makeCar(random, x, y, angle, { parked: true, driver: false });
 }
 
 /** Spawn a moving traffic car on a random road lane. */
@@ -75,21 +74,35 @@ export function createTraffic(random, count) {
   return cars;
 }
 
-/** Arcade car physics for the player's car. Returns true if it hit something hard. */
+/**
+ * Arcade car physics for the player's car. WASD drives; holding Shift at
+ * speed is a handbrake drift: the tail steps out, steering sharpens, speed
+ * scrubs away and the world lays skid marks where the tyres slide.
+ */
 export function drivePlayerCar(car, input, dt) {
   const move = input.moveVector();
   const forward = move.y < 0; // W / up accelerates
   const reverse = move.y > 0;
   const steer = move.x;
+  const before = car.speed;
   if (forward) car.speed += CAR.accel * dt;
   else if (reverse) car.speed -= (car.speed > 0 ? CAR.brake : CAR.accel * 0.55) * dt;
   else {
     const drag = CAR.drag * 60 * dt;
     car.speed = Math.abs(car.speed) <= drag ? 0 : car.speed - Math.sign(car.speed) * drag;
   }
+  car.brake = reverse && car.speed > 10 ? 1 : Math.max(0, (before - car.speed) * 2.2);
+
+  const drifting = input.held.run && Math.abs(car.speed) > 150 && steer !== 0;
+  car.drift = drifting ? Math.min(1, car.drift + dt * 5) : Math.max(0, car.drift - dt * 4);
+  if (car.drift > 0) {
+    const scrub = CAR.driftDrag * car.drift * dt;
+    car.speed = Math.abs(car.speed) <= scrub ? 0 : car.speed - Math.sign(car.speed) * scrub;
+  }
   car.speed = Math.max(-CAR.reverseSpeed, Math.min(CAR.maxSpeed * car.speedMul, car.speed));
-  const steerAmount = steer * CAR.turnRate * dt * Math.min(1, Math.abs(car.speed) / 120 + 0.25) * Math.sign(car.speed || 1);
-  car.angle += steerAmount;
+  const grip = Math.min(1, Math.abs(car.speed) / 120 + 0.25);
+  const turnMul = 1 + (CAR.driftTurnMul - 1) * car.drift;
+  car.angle += steer * CAR.turnRate * turnMul * dt * grip * Math.sign(car.speed || 1);
   car.x += Math.cos(car.angle) * car.speed * dt;
   car.y += Math.sin(car.angle) * car.speed * dt;
   car.x = Math.max(30, Math.min(CITY_SIZE - 30, car.x));
@@ -101,7 +114,7 @@ export function drivePlayerCar(car, input, dt) {
 export function stepTraffic(cars, dt, random, playerCar) {
   for (const car of cars) {
     if (car.isPlayer || car.parked) continue;
-    // Slow down for the car directly ahead.
+    // Slow down for the car directly ahead (traffic or the player's).
     let ahead = Infinity;
     for (const other of cars) {
       if (other === car) continue;
@@ -118,8 +131,11 @@ export function stepTraffic(cars, dt, random, playerCar) {
       const side = car.axis === 'x' ? Math.abs(dy) : Math.abs(dx);
       if (along > 0 && along < 130 && side < 40) ahead = Math.min(ahead, along);
     }
-    const target = ahead < 90 ? 0 : 170 * car.speedMul;
-    car.speed += (target - car.speed) * Math.min(1, dt * 1.4);
+    const cruising = 175 * car.speedMul;
+    const target = ahead < 95 ? Math.max(0, (ahead - 55) * 2.2) : cruising;
+    const before = car.speed;
+    car.speed += (target - car.speed) * Math.min(1, dt * 1.6);
+    car.brake = car.speed < before - 4 ? 1 : Math.max(0, car.brake - dt * 3);
     if (ahead < 60) car.stuck += dt; else car.stuck = 0;
     if (car.stuck > 2.5 && car.honk <= 0) { car.honk = 1.2; car.stuck = 0; }
     if (car.honk > 0) car.honk -= dt;

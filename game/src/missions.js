@@ -1,7 +1,7 @@
-// The story of Sunhaven Streets: five missions for Alex Vega, a driver new
+// The story of Sunhaven Streets: six missions for Alex Vega, a driver new
 // in town who owes money to the wrong people and has to earn it back. Each
 // mission has a target marker on the map and the minimap, a timer where the
-// pressure matters, and a cash reward. Finishing all five clears the debt
+// pressure matters, and a cash reward. Finishing all six clears the debt
 // and unlocks free roam with the "King of Sunhaven" title.
 import { LANDMARKS } from './city.js';
 
@@ -27,15 +27,30 @@ export const MISSIONS = [
   {
     id: 'arena-brawl',
     title: '4 · Arena Brawl',
-    brief: 'The Red Tide gang jumped Rico\'s nephew. Go to the Backstreet Arena and teach all 4 of them a lesson. Fists or pistol.',
+    brief: 'The Red Tide gang jumped Rico\'s nephew. Go to the Backstreet Arena and teach all 4 of them a lesson. Fists or pistol — watch for return fire.',
     reward: 450,
   },
   {
+    id: 'sunset-run',
+    title: '5 · Sunset Run',
+    brief: 'Rico\'s crew bet $800 you cannot run the bay: 5 checkpoints, beach to bank and back, before the clock dies. Every gate buys you more time.',
+    reward: 800,
+  },
+  {
     id: 'big-score',
-    title: '5 · The Big Score',
+    title: '6 · The Big Score',
     brief: 'Rob Sunhaven Bank: stand at the vault door to crack it, grab the cash, then lose a 3-star chase and reach the Hideout. Clear the debt.',
     reward: 1000,
   },
+];
+
+/** The Sunset Run gates, in order: pier, arena hill, the bank, the hospital, home. */
+const SUNSET_GATES = [
+  { x: 1750, y: 3350, label: 'Gate 1 · Marina Pier' },
+  { x: 750, y: 2750, label: 'Gate 2 · Backstreet Arena' },
+  { x: 1250, y: 250, label: 'Gate 3 · Sunhaven Bank' },
+  { x: 2750, y: 750, label: 'Gate 4 · St. Coral Hospital' },
+  { x: 3250, y: 3250, label: 'Gate 5 · The Hideout — finish' },
 ];
 
 export function currentMission(state) {
@@ -67,11 +82,41 @@ export function startMission(state, index) {
     state.heat = 1;
   } else if (mission.id === 'arena-brawl') {
     state.setTarget(LANDMARKS.arena.x, LANDMARKS.arena.y, 'Backstreet Arena');
+  } else if (mission.id === 'sunset-run') {
+    state.missionTimer = 95;
+    state.checkpoints = SUNSET_GATES.map((g) => ({ ...g, done: false }));
+    state.setTarget(state.checkpoints[0].x, state.checkpoints[0].y, state.checkpoints[0].label);
   } else if (mission.id === 'big-score') {
     state.setTarget(LANDMARKS.bank.x, LANDMARKS.bank.y, 'Sunhaven Bank — crack the vault');
   }
   state.toast = `${mission.title}: ${mission.brief}`;
   state.toastTime = 5;
+}
+
+/** Shared checkpoint logic for the two timed runs. Returns 'done' at the last gate. */
+function stepCheckpoints(state, dt, secondsPerGate, cashPerGate) {
+  state.missionTimer -= dt;
+  if (state.missionTimer <= 0) {
+    state.missionFailed = true;
+    return 'failed';
+  }
+  const near = (x, y, r) => Math.hypot(state.player.x - x, state.player.y - y) < r;
+  const cp = state.checkpoints.find((c) => !c.done);
+  if (cp && near(cp.x, cp.y, 100)) {
+    cp.done = true;
+    state.audio.sfx.pickup();
+    state.money += cashPerGate;
+    state.missionTimer += secondsPerGate;
+    const next = state.checkpoints.find((c) => !c.done);
+    if (next) {
+      state.setTarget(next.x, next.y, next.label);
+      state.toast = `${cp.label} done — +$${cashPerGate}, +${secondsPerGate}s. Next: ${next.label}`;
+    } else {
+      return completeMission(state);
+    }
+    state.toastTime = 3;
+  }
+  return null;
 }
 
 /** Advance the active mission. Returns 'done' | 'failed' | null. */
@@ -89,25 +134,9 @@ export function stepMission(state, dt) {
       return completeMission(state);
     }
   } else if (mission.id === 'coral-courier') {
-    state.missionTimer -= dt;
-    if (state.missionTimer <= 0) {
-      state.missionFailed = true;
-      return 'failed';
-    }
-    const cp = state.checkpoints.find((c) => !c.done);
-    if (cp && near(cp.x, cp.y, 90)) {
-      cp.done = true;
-      state.audio.sfx.pickup();
-      state.money += 50;
-      const next = state.checkpoints.find((c) => !c.done);
-      if (next) {
-        state.setTarget(next.x, next.y, next.label);
-        state.toast = `${cp.label} done — +$50. Next: ${next.label}`;
-      } else {
-        return completeMission(state);
-      }
-      state.toastTime = 3;
-    }
+    return stepCheckpoints(state, dt, 0, 50);
+  } else if (mission.id === 'sunset-run') {
+    return stepCheckpoints(state, dt, 9, 25);
   } else if (mission.id === 'hot-package') {
     if (state.missionStage === 0 && near(LANDMARKS.market.x, LANDMARKS.market.y, 110)) {
       state.missionStage = 1;
@@ -124,7 +153,7 @@ export function stepMission(state, dt) {
       state.spawnGang(4, LANDMARKS.arena.x, LANDMARKS.arena.y);
       state.toast = 'The Red Tide gang is here — take all 4 down!';
       state.toastTime = 3;
-    } else if (state.missionStage === 1 && state.enemies.every((e) => e.state === 'down')) {
+    } else if (state.missionStage === 1 && state.enemies.length > 0 && state.enemies.every((e) => e.state === 'down')) {
       return completeMission(state);
     }
   } else if (mission.id === 'big-score') {
@@ -180,9 +209,10 @@ function completeMission(state) {
 export function missionStatus(state) {
   const mission = currentMission(state);
   if (!mission) return 'All missions complete — free roam!';
-  if (mission.id === 'coral-courier') {
+  if (mission.id === 'coral-courier' || mission.id === 'sunset-run') {
     const done = state.checkpoints.filter((c) => c.done).length;
-    return `${mission.title} — ${done}/3 drop-offs · ${Math.max(0, Math.ceil(state.missionTimer))}s left`;
+    const total = state.checkpoints.length;
+    return `${mission.title} — ${done}/${total} gates · ${Math.max(0, Math.ceil(state.missionTimer))}s left`;
   }
   if (mission.id === 'arena-brawl' && state.missionStage === 1) {
     const left = state.enemies.filter((e) => e.state !== 'down').length;

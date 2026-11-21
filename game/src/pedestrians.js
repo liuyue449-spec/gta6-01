@@ -1,10 +1,11 @@
 // Pedestrians: the city's foot traffic. They stroll along sidewalks, pause
-// at shop windows, cross roads at intersections, and run away screaming
-// (and call the police) when they see violence, a crash, or a stolen car.
-// A few of them carry cash the player can earn by helping, never by hurting:
-// hitting a pedestrian is a crime that raises the wanted level.
+// at shop windows, drift toward the market and cafe doors at lunchtime, and
+// run away screaming when they see violence, a crash, or a stolen car. A
+// witness who gets clear of a crime scene phones it in, so gunfire near a
+// crowd can raise a star even after the noise stops. Hitting a pedestrian
+// is a crime that raises the wanted level.
 import { CITY_SIZE, PALETTE, ROAD_CENTRES, ROAD_W } from './config.js';
-import { nearestRoadCentre } from './city.js';
+import { LANDMARKS, nearestRoadCentre } from './city.js';
 import { pick, range } from './random.js';
 
 export function makePed(random, x, y) {
@@ -13,11 +14,12 @@ export function makePed(random, x, y) {
     angle: range(random, 0, Math.PI * 2),
     speed: range(random, 40, 75),
     shirt: pick(random, PALETTE.pedShirt),
-    state: 'walk', // walk | idle | flee | down
+    state: 'walk', // walk | idle | flee | down | phone
     stateTime: range(random, 0, 4),
     targetX: x,
     targetY: y,
     scared: 0,
+    reported: false, // this witness has already phoned in their scare
     bob: range(random, 0, Math.PI * 2),
   };
 }
@@ -35,8 +37,16 @@ export function createPedestrians(random, count) {
   return peds;
 }
 
-/** Pick a new stroll target: the next intersection along the sidewalk. */
+/** Pick a new stroll target: the next intersection along the sidewalk, or a shop door. */
 function pickStrollTarget(ped, random) {
+  // One stroll in six heads for a landmark door, so the market and the cafe
+  // gather little crowds the player can buy from and hide among.
+  if (random() < 0.16) {
+    const door = pick(random, [LANDMARKS.market, LANDMARKS.cafe, LANDMARKS.pier]);
+    ped.targetX = door.x + range(random, -70, 70);
+    ped.targetY = door.y + range(random, 60, 130);
+    return;
+  }
   const horizontal = Math.abs(ped.y - nearestRoadCentre(ped.y)) < Math.abs(ped.x - nearestRoadCentre(ped.x));
   if (horizontal) {
     const c = nearestRoadCentre(ped.y);
@@ -49,7 +59,12 @@ function pickStrollTarget(ped, random) {
   }
 }
 
+/**
+ * One step for the crowd. Returns true on the step where a witness finishes
+ * phoning in a crime, so the world can raise a star for it (once per scare).
+ */
 export function stepPedestrians(peds, dt, random, danger) {
+  let phonedIn = false;
   for (const ped of peds) {
     ped.bob += dt * 8;
     ped.stateTime -= dt;
@@ -57,12 +72,14 @@ export function stepPedestrians(peds, dt, random, danger) {
       // A knocked-down pedestrian gets up after a while and walks away.
       if (ped.stateTime <= 0) {
         ped.state = 'walk';
+        ped.reported = false;
         pickStrollTarget(ped, random);
       }
       continue;
     }
     // A nearby danger (gunfire, crash, car theft) scares them into fleeing.
     if (danger && Math.hypot(ped.x - danger.x, ped.y - danger.y) < danger.radius) {
+      if (ped.state !== 'flee') ped.reported = false;
       ped.state = 'flee';
       ped.stateTime = 2.5;
       ped.scared = 1;
@@ -71,10 +88,31 @@ export function stepPedestrians(peds, dt, random, danger) {
       const dx = ped.x - (danger ? danger.x : ped.x);
       const dy = ped.y - (danger ? danger.y : ped.y);
       const len = Math.hypot(dx, dy) || 1;
-      ped.x += (dx / len) * 190 * dt;
-      ped.y += (dy / len) * 190 * dt;
+      ped.x += (dx / len) * 195 * dt;
+      ped.y += (dy / len) * 195 * dt;
       ped.angle = Math.atan2(dy, dx);
-      if (ped.stateTime <= 0) { ped.state = 'walk'; pickStrollTarget(ped, random); }
+      ped.x = Math.max(24, Math.min(CITY_SIZE - 24, ped.x));
+      ped.y = Math.max(24, Math.min(CITY_SIZE - 24, ped.y));
+      if (ped.stateTime <= 0) {
+        // Clear of the scene: a scared witness stops and phones it in.
+        if (ped.scared && !ped.reported) {
+          ped.state = 'phone';
+          ped.stateTime = 1.6;
+        } else {
+          ped.state = 'walk';
+          pickStrollTarget(ped, random);
+        }
+      }
+      continue;
+    }
+    if (ped.state === 'phone') {
+      if (ped.stateTime <= 0) {
+        ped.reported = true;
+        ped.scared = 0;
+        ped.state = 'walk';
+        pickStrollTarget(ped, random);
+        phonedIn = true;
+      }
       continue;
     }
     if (ped.state === 'idle') {
@@ -96,4 +134,5 @@ export function stepPedestrians(peds, dt, random, danger) {
     ped.x = Math.max(30, Math.min(CITY_SIZE - 30, ped.x));
     ped.y = Math.max(30, Math.min(CITY_SIZE - 30, ped.y));
   }
+  return phonedIn;
 }

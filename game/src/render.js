@@ -1,10 +1,15 @@
 // Drawing only: the world's state and the current screen in, pixels out.
 // The 1280x720 viewport is scaled to fit the window and centred; the world
 // is drawn through the camera, the HUD and menus in screen space. Sun-soaked
-// palette, long soft shadows, palm trees and a blue bay — a bright modern
-// coastal city, drawn entirely with canvas shapes.
-import { CITY_SIZE, FONT, PALETTE, ROAD_CENTRES, ROAD_W, VIEW } from './config.js';
-import { missionStatus } from './missions.js';
+// palette, long soft shadows, fan palms, rooftop clutter, animated bay
+// water and a blue bay — a bright modern coastal city, drawn entirely with
+// canvas shapes. The HUD names the district, shows the heat cooling under
+// the stars, points at off-screen targets and flashes red when Alex is hurt.
+import { CITY_SIZE, DAY_LENGTH, FONT, PALETTE, ROAD_CENTRES, ROAD_W, VIEW } from './config.js';
+import { districtAt, LANDMARKS } from './city.js';
+import { hash2 } from './random.js';
+import { MISSIONS, missionStatus } from './missions.js';
+import { shopHint } from './shops.js';
 
 export const SCREEN_TITLE = 'title';
 export const SCREEN_PLAY = 'play';
@@ -65,6 +70,16 @@ export function createRenderer(canvas) {
     context.fill();
     context.fillStyle = 'rgba(255,255,255,0.75)';
     context.fillRect(28, -12, 3, 24);
+    // Headlights at the nose, tail lights at the rear — the rear pair burns
+    // bright red while the car brakes, so traffic reads at a glance.
+    context.fillStyle = PALETTE.headlight;
+    context.beginPath();
+    context.arc(31, -10, 3, 0, Math.PI * 2);
+    context.arc(31, 10, 3, 0, Math.PI * 2);
+    context.fill();
+    context.fillStyle = car.brake > 0.15 ? PALETTE.brakeLight : 'rgba(255,80,70,0.45)';
+    context.fillRect(-33, -11, 3, 6);
+    context.fillRect(-33, 5, 3, 6);
     if (car.isCop) {
       const flash = Math.floor(performance.now() / 180) % 2 === 0;
       context.fillStyle = flash ? '#ff2d2d' : '#2d6bff';
@@ -80,6 +95,8 @@ export function createRenderer(canvas) {
       context.stroke();
     }
     context.restore();
+    // A stuck driver honks: a little quaver floats over the car.
+    if (car.honk > 0) text('♪', car.x + 6, car.y - 30, 18, '#ffffff', 'center');
   }
 
   function drawPerson(x, y, angle, shirt, down, bob, label) {
@@ -116,11 +133,16 @@ export function createRenderer(canvas) {
     context.fillRect(left, top, right - left, bottom - top);
     context.fillStyle = PALETTE.sand;
     context.fillRect(left, city.beach.y, right - left, city.beach.h);
+    // The boardwalk: a pale strip between the sand and the water.
+    context.fillStyle = '#e8d9b0';
+    context.fillRect(left, city.boardwalk.y, right - left, city.boardwalk.h);
     context.fillStyle = PALETTE.water;
     context.fillRect(left, city.beach.y + 110, right - left, 80);
+    // Sparkle on the water, drifting with time so the bay feels alive.
     context.fillStyle = 'rgba(255,255,255,0.35)';
+    const drift = (state.elapsed * 26) % 457;
     for (let i = 0; i < 8; i += 1) {
-      const wx = ((i * 457) % CITY_SIZE);
+      const wx = ((i * 457 + drift) % CITY_SIZE);
       if (wx > left && wx < right) context.fillRect(wx, city.beach.y + 128 + (i % 3) * 18, 90, 4);
     }
     // Parks.
@@ -129,6 +151,21 @@ export function createRenderer(canvas) {
       roundRect(context, p.x, p.y, p.w, p.h, 18);
       context.fill();
       text(p.name, p.x + p.w / 2, p.y + 30, 16, '#ffffff', 'center');
+    }
+    // Parking lots: asphalt with bay lines, a breather between rooftops.
+    for (const lot of city.lots) {
+      if (lot.x + lot.w < left || lot.x > right || lot.y + lot.h < top || lot.y > bottom) continue;
+      context.fillStyle = '#565d66';
+      context.fillRect(lot.x, lot.y, lot.w, lot.h);
+      context.strokeStyle = 'rgba(255,255,255,0.5)';
+      context.lineWidth = 2;
+      for (let i = 1; i < lot.bays; i += 1) {
+        const bx = lot.x + (lot.w / lot.bays) * i;
+        context.beginPath();
+        context.moveTo(bx, lot.y + 10);
+        context.lineTo(bx, lot.y + 44);
+        context.stroke();
+      }
     }
     // Sidewalks then roads.
     context.fillStyle = PALETTE.sidewalk;
@@ -149,7 +186,7 @@ export function createRenderer(canvas) {
         if (v > top - 90 && v < bottom) context.fillRect(c - 3, v, 6, 44);
       }
     }
-    // Buildings with roofs, windows and a soft shadow.
+    // Buildings with roofs, windows, rooftop clutter and a soft shadow.
     for (const b of city.buildings) {
       if (b.x + b.w < left || b.x > right || b.y + b.h < top || b.y > bottom) continue;
       context.fillStyle = 'rgba(0,0,0,0.22)';
@@ -167,25 +204,61 @@ export function createRenderer(canvas) {
           context.fillRect(b.x + 12 + cx * ((b.w - 24) / cols), b.y + 12 + cy * ((b.h - 24) / rows), 14, 10);
         }
       }
+      // Rooftop clutter, placed by a hash of the corner so it never flickers:
+      // a water tank on some roofs, an air-conditioning box on others.
+      const clutter = hash2(b.x, b.y);
+      context.fillStyle = 'rgba(0,0,0,0.28)';
+      if (clutter < 0.33) {
+        context.beginPath();
+        context.arc(b.x + b.w * 0.78, b.y + b.h * 0.24, 13, 0, Math.PI * 2);
+        context.fill();
+      } else if (clutter < 0.66) {
+        context.fillRect(b.x + b.w * 0.66, b.y + b.h * 0.14, 30, 20);
+      }
       if (b.landmark) {
         const names = { bank: 'BANK', hospital: 'HOSPITAL', garage: "RICO'S", hideout: 'HIDEOUT', market: 'MARKET', arena: 'ARENA', pier: 'PIER', cafe: 'CAFE' };
         text(names[b.landmark] || '', b.x + b.w / 2, b.y + b.h / 2 + 6, 18, '#ffffff', 'center');
       }
     }
-    // Palm trees.
+    // Palm trees: a short trunk and a fan of fronds, not a lollipop.
     for (const t of city.trees) {
       if (t.x < left || t.x > right || t.y < top || t.y > bottom) continue;
-      context.fillStyle = '#7a5230';
-      context.fillRect(t.x - 2, t.y - 2, 4, 10);
-      context.fillStyle = PALETTE.parkTree;
+      context.fillStyle = 'rgba(0,0,0,0.2)';
       context.beginPath();
-      context.arc(t.x, t.y - 6, 11, 0, Math.PI * 2);
+      context.ellipse(t.x + 5, t.y + 6, 12, 7, 0, 0, Math.PI * 2);
       context.fill();
+      context.strokeStyle = '#7a5230';
+      context.lineWidth = 4;
+      context.beginPath();
+      context.moveTo(t.x, t.y + 8);
+      context.lineTo(t.x, t.y - 6);
+      context.stroke();
+      context.strokeStyle = PALETTE.parkTree;
+      context.lineWidth = 3;
+      for (let f = 0; f < 6; f += 1) {
+        const a = (f / 6) * Math.PI * 2 + 0.4;
+        context.beginPath();
+        context.moveTo(t.x, t.y - 6);
+        context.quadraticCurveTo(
+          t.x + Math.cos(a) * 10, t.y - 6 + Math.sin(a) * 10 - 3,
+          t.x + Math.cos(a) * 17, t.y - 6 + Math.sin(a) * 17 + 4,
+        );
+        context.stroke();
+      }
     }
   }
 
   function drawWorld(state) {
     drawCity(state);
+    // Skid marks under everything mobile: dark streaks that fade out.
+    context.fillStyle = PALETTE.skid;
+    for (const s of state.skids) {
+      context.globalAlpha = Math.max(0, Math.min(0.55, s.t * 0.16));
+      context.beginPath();
+      context.arc(s.x, s.y, 5, 0, Math.PI * 2);
+      context.fill();
+    }
+    context.globalAlpha = 1;
     // Mission target: a pulsing gold beacon with a beam.
     if (state.target) {
       const pulse = 1 + Math.sin(performance.now() / 220) * 0.15;
@@ -207,9 +280,19 @@ export function createRenderer(canvas) {
       context.fill();
       text(state.target.label, state.target.x, state.target.y - 40, 15, '#fff200', 'center');
     }
-    // Pickups.
+    // Pickups: cash is green, ammo orange, first aid a white cross on red.
     for (const p of state.pickups) {
       if (p.taken) continue;
+      if (p.kind === 'health') {
+        context.fillStyle = '#e23b3b';
+        context.beginPath();
+        context.arc(p.x, p.y, 11, 0, Math.PI * 2);
+        context.fill();
+        context.fillStyle = '#ffffff';
+        context.fillRect(p.x - 2, p.y - 7, 4, 14);
+        context.fillRect(p.x - 7, p.y - 2, 14, 4);
+        continue;
+      }
       context.fillStyle = p.kind === 'cash' ? '#2ecc71' : '#f39c12';
       context.beginPath();
       context.arc(p.x, p.y, 11, 0, Math.PI * 2);
@@ -226,6 +309,8 @@ export function createRenderer(canvas) {
     // Pedestrians, gang members, the player.
     for (const ped of state.peds) {
       drawPerson(ped.x, ped.y, ped.angle, ped.shirt, ped.state === 'down', ped.bob);
+      if (ped.state === 'flee') text('!', ped.x, ped.y - 24, 15, '#ffd23f', 'center');
+      if (ped.state === 'phone') text('☎', ped.x, ped.y - 24, 14, '#ffffff', 'center');
     }
     for (const e of state.enemies) {
       drawPerson(e.x, e.y, e.angle, '#8b1e2d', e.state === 'down', e.bob, '');
@@ -257,15 +342,28 @@ export function createRenderer(canvas) {
       context.fillRect(-8, -2, 16, 4);
       context.restore();
     }
-    // Effects: crash stars and hit flashes.
+    // Effects: crash stars, hit flashes, muzzle flashes, punch arcs.
     for (const fx of state.effects) {
       const a = Math.max(0, fx.t * 2);
       context.save();
       context.globalAlpha = a;
-      context.fillStyle = fx.kind === 'crash' ? '#ff9f1c' : '#ffffff';
-      context.beginPath();
-      context.arc(fx.x, fx.y, 18 * (1 - a) + 6, 0, Math.PI * 2);
-      context.fill();
+      if (fx.kind === 'flash') {
+        context.fillStyle = '#ffd23f';
+        context.beginPath();
+        context.arc(fx.x, fx.y, 9, 0, Math.PI * 2);
+        context.fill();
+      } else if (fx.kind === 'punch') {
+        context.strokeStyle = '#ffffff';
+        context.lineWidth = 3;
+        context.beginPath();
+        context.arc(fx.x, fx.y, 14 * (1 - a) + 6, 0, Math.PI * 2);
+        context.stroke();
+      } else {
+        context.fillStyle = fx.kind === 'crash' ? '#ff9f1c' : '#ffffff';
+        context.beginPath();
+        context.arc(fx.x, fx.y, 18 * (1 - a) + 6, 0, Math.PI * 2);
+        context.fill();
+      }
       context.restore();
     }
   }
@@ -304,22 +402,65 @@ export function createRenderer(canvas) {
     if (state.target) dot(state.target.x, state.target.y, '#ffd23f', 6);
     for (const cop of state.cops) dot(cop.x, cop.y, '#ff5252', 4);
     for (const e of state.enemies) if (e.state !== 'down') dot(e.x, e.y, '#ff8c42', 3);
-    dot(state.player.x, state.player.y, '#ffffff', 5);
+    // Landmark letters, so the map teaches the city: $ bank, + hospital.
+    const marks = { bank: '$', hospital: '+', garage: 'G', market: 'M', cafe: 'C', arena: 'A', pier: 'P', hideout: 'H' };
+    for (const key of Object.keys(marks)) {
+      const lm = LANDMARKS[key];
+      text(marks[key], mx + lm.x * MAP_SCALE, my + lm.y * MAP_SCALE + 4, 10, 'rgba(255,255,255,0.85)', 'center');
+    }
+    // The player: a heading wedge inside the gold ring, not just a dot.
+    const px = mx + state.player.x * MAP_SCALE;
+    const py = my + state.player.y * MAP_SCALE;
+    context.fillStyle = '#ffffff';
+    context.beginPath();
+    context.moveTo(px + Math.cos(state.player.angle) * 7, py + Math.sin(state.player.angle) * 7);
+    context.lineTo(px + Math.cos(state.player.angle + 2.5) * 5, py + Math.sin(state.player.angle + 2.5) * 5);
+    context.lineTo(px + Math.cos(state.player.angle - 2.5) * 5, py + Math.sin(state.player.angle - 2.5) * 5);
+    context.closePath();
+    context.fill();
     context.strokeStyle = '#ffd23f';
     context.lineWidth = 2;
     context.beginPath();
-    context.arc(mx + state.player.x * MAP_SCALE, my + state.player.y * MAP_SCALE, 8, 0, Math.PI * 2);
+    context.arc(px, py, 8, 0, Math.PI * 2);
     context.stroke();
     context.restore();
     text('SUNHAVEN', mx + MAP_SIZE / 2, my + MAP_SIZE + 20, 12, '#ffffff', 'center');
   }
 
+  /** An arrow at the screen edge pointing at an off-screen mission target. */
+  function drawTargetArrow(state) {
+    if (!state.target) return;
+    const cam = state.camera;
+    const sx = state.target.x - cam.x + VIEW.width / 2;
+    const sy = state.target.y - cam.y + VIEW.height / 2;
+    if (sx > 40 && sx < VIEW.width - 40 && sy > 40 && sy < VIEW.height - 40) return;
+    const cx = VIEW.width / 2;
+    const cy = VIEW.height / 2;
+    const angle = Math.atan2(sy - cy, sx - cx);
+    const ax = Math.max(46, Math.min(VIEW.width - 46, sx));
+    const ay = Math.max(46, Math.min(VIEW.height - 46, sy));
+    const dist = Math.round(Math.hypot(state.target.x - state.player.x, state.target.y - state.player.y) / 10);
+    context.save();
+    context.translate(ax, ay);
+    context.rotate(angle);
+    context.fillStyle = PALETTE.mission;
+    context.beginPath();
+    context.moveTo(16, 0);
+    context.lineTo(-8, -10);
+    context.lineTo(-8, 10);
+    context.closePath();
+    context.fill();
+    context.restore();
+    text(`${dist}m`, ax, ay + 26, 12, PALETTE.mission, 'center');
+  }
+
   function drawHud(state) {
     // Top-left panel: health, money, wanted stars, ammo.
     context.fillStyle = PALETTE.hudPanel;
-    roundRect(context, 14, 14, 330, 118, 10);
+    roundRect(context, 14, 14, 330, 132, 10);
     context.fill();
     text(`$${state.money}`, 28, 44, 26, PALETTE.hudGold, 'left');
+    text(districtAt(state.player.x, state.player.y).toUpperCase(), 344, 44, 13, '#9fb3c8', 'right');
     text('HEALTH', 28, 72, 13, '#9fb3c8', 'left');
     context.fillStyle = 'rgba(255,255,255,0.2)';
     context.fillRect(28, 80, 180, 12);
@@ -329,13 +470,31 @@ export function createRenderer(canvas) {
     const stars = '★'.repeat(state.wanted) + '☆'.repeat(5 - state.wanted);
     text(stars, 28, 120, 22, state.wanted > 0 ? '#ff5252' : '#9fb3c8', 'left');
     text(state.inCar ? `${state.car ? state.car.type : 'CAR'} · ${Math.round(Math.abs(state.car ? state.car.speed : 0) * 0.12)} mph` : `AMMO ${state.player.ammo}`, 246, 120, 14, '#ffffff', 'left');
+    // Under the stars: the heat bar. It drains while no cop can see Alex;
+    // while he is in sight it stays full and says so.
+    if (state.wanted > 0) {
+      context.fillStyle = 'rgba(255,255,255,0.18)';
+      context.fillRect(28, 128, 180, 6);
+      context.fillStyle = state.playerSeen ? '#ff5252' : '#ffb84d';
+      context.fillRect(28, 128, 180 * Math.max(0, Math.min(1, state.heat)), 6);
+      text(state.playerSeen ? 'IN SIGHT' : 'COOLING…', 216, 136, 11, state.playerSeen ? '#ff5252' : '#ffb84d', 'left');
+    }
 
     // Mission tracker under the top-left panel.
     const status = missionStatus(state);
     context.fillStyle = PALETTE.hudPanel;
-    roundRect(context, 14, 142, 420, 34, 8);
+    roundRect(context, 14, 156, 420, 34, 8);
     context.fill();
-    text(status.length > 62 ? status.slice(0, 62) + '…' : status, 26, 164, 15, PALETTE.hudGold, 'left');
+    text(status.length > 62 ? status.slice(0, 62) + '…' : status, 26, 178, 15, PALETTE.hudGold, 'left');
+
+    // A shop door offers its wares on the line under the tracker.
+    const hint = shopHint(state);
+    if (hint) {
+      context.fillStyle = PALETTE.hudPanel;
+      roundRect(context, 14, 196, 420, 30, 8);
+      context.fill();
+      text(hint, 26, 216, 14, '#7be495', 'left');
+    }
 
     // Arrest progress: a cop is grabbing you.
     if (state.arrestTimer > 0.2) {
@@ -353,10 +512,21 @@ export function createRenderer(canvas) {
       text(state.toast.length > 88 ? state.toast.slice(0, 88) + '…' : state.toast, VIEW.width / 2, VIEW.height - 57, 16, '#ffffff', 'center');
     }
     // Controls hint.
-    text('WASD move/drive · E enter/exit car · F punch · G shoot (aim with mouse) · P pause · H save', VIEW.width / 2, VIEW.height - 14, 13, 'rgba(255,255,255,0.75)', 'center');
+    text('WASD move/drive · Shift run / drift · E car · F punch · G shoot · B buy · P pause · H save', VIEW.width / 2, VIEW.height - 14, 13, 'rgba(255,255,255,0.75)', 'center');
     drawMinimap(state);
+    drawTargetArrow(state);
     if (state.storyComplete) {
       text('★ KING OF SUNHAVEN ★', VIEW.width / 2, 52, 22, PALETTE.hudGold, 'center');
+    }
+    // Hurt feedback last, over everything: a red flash on the hit itself and
+    // a deepening vignette while health is low.
+    if (state.hurtT > 0) {
+      context.fillStyle = `rgba(255,30,30,${(state.hurtT * 0.55).toFixed(3)})`;
+      context.fillRect(0, 0, VIEW.width, VIEW.height);
+    } else if (state.player.health > 0 && state.player.health <= 30) {
+      const pulse = 0.10 + 0.05 * Math.sin(performance.now() / 300);
+      context.fillStyle = `rgba(200,0,0,${pulse.toFixed(3)})`;
+      context.fillRect(0, 0, VIEW.width, VIEW.height);
     }
   }
 
@@ -379,6 +549,14 @@ export function createRenderer(canvas) {
     text(prompt, VIEW.width / 2, y + height - 30, 20, PALETTE.hudGold, 'center');
   }
 
+  /** A whisper of day tint over the world: the light warms and cools slowly. */
+  function dayTint(state) {
+    const phase = (state.elapsed % DAY_LENGTH) / DAY_LENGTH;
+    const warm = Math.sin(phase * Math.PI * 2) * 0.5 + 0.5;
+    context.fillStyle = `rgba(255,${Math.round(150 + warm * 60)},60,${(0.03 + warm * 0.03).toFixed(3)})`;
+    context.fillRect(0, 0, VIEW.width, VIEW.height);
+  }
+
   /** Paint one frame: the world through the camera, then the HUD or a menu. */
   function draw(state, screen) {
     context.setTransform(1, 0, 0, 1, 0, 0);
@@ -388,17 +566,19 @@ export function createRenderer(canvas) {
     context.setTransform(view.scale, 0, 0, view.scale, view.x + VIEW.width * view.scale / 2 - cam.x * view.scale, view.y + VIEW.height * view.scale / 2 - cam.y * view.scale);
     drawWorld(state);
     context.setTransform(view.scale, 0, 0, view.scale, view.x, view.y);
+    dayTint(state);
     if (screen === SCREEN_TITLE) {
       context.fillStyle = 'rgba(8,14,24,0.45)';
       context.fillRect(0, 0, VIEW.width, VIEW.height);
       drawPanel('SUNHAVEN STREETS', [
         'A sun-soaked open-world crime game. You are Alex Vega,',
         'a driver new in town with a debt to clear.',
-        'Steal cars, outrun the police, run 5 story missions,',
+        `Steal cars, outrun the police, run ${MISSIONS.length} story missions,`,
         'and become the King of Sunhaven.',
         '',
-        `Missions done: ${state.missionsDone} / 5    Money: $${state.money}`,
+        `Missions done: ${state.missionsDone} / ${MISSIONS.length}    Money: $${state.money}`,
         'WASD move & drive · E steal / exit car · F punch · G shoot',
+        'B buys ammo at the market and a hot meal at the cafe',
       ], 'Press Space or click to start — C continues a saved game', '#ffd23f');
       return;
     }
@@ -408,7 +588,7 @@ export function createRenderer(canvas) {
       context.fillRect(0, 0, VIEW.width, VIEW.height);
       drawPanel('PAUSED', [
         'The city waits for you.',
-        `Money $${state.money} · Missions ${state.missionsDone}/5 · Cars stolen ${state.stats.carsStolen}`,
+        `Money $${state.money} · Missions ${state.missionsDone}/${MISSIONS.length} · Cars stolen ${state.stats.carsStolen}`,
         'H saves your game. M toggles music.',
       ], 'Press P or Space to resume');
     } else if (screen === SCREEN_BUSTED) {

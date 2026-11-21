@@ -1,8 +1,9 @@
 // All sound is synthesised with WebAudio: no audio files, no network.
-// Short effects (engine hum, siren, gunshot, punch, coin, crash, pickup) are
-// built from oscillators and filtered noise; a light bass-and-hat loop keeps
-// the city feeling alive. Everything is created lazily on the first user
-// gesture, so the game never tries to play before the browser allows it.
+// Short effects (engine hum, siren, gunshot, punch, coin, crash, pickup,
+// and the till at the two shops) are built from oscillators and filtered
+// noise; a light bass-and-hat loop keeps the city feeling alive. Everything
+// is created lazily on the first user gesture, so the game never tries to
+// play before the browser allows it.
 export function createAudio() {
   let ctx = null;
   let master = null;
@@ -62,6 +63,11 @@ export function createAudio() {
     unlock() { if (ensure() && ctx.state === 'suspended') ctx.resume(); },
     click() { tone(660, 0.07, 'square', 0.12); },
     coin() { tone(880, 0.09, 'sine', 0.2); setTimeout(() => tone(1320, 0.14, 'sine', 0.2), 70); },
+    buy() {
+      // A two-note till chime: the shop register saying thank you.
+      tone(988, 0.08, 'triangle', 0.24);
+      setTimeout(() => tone(1319, 0.14, 'triangle', 0.24), 80);
+    },
     punch() { noise(0.12, 0.5, 900); tone(140, 0.1, 'sine', 0.3, 70); },
     shoot() { noise(0.16, 0.7, 2400); tone(220, 0.08, 'square', 0.25, 60); },
     crash() { noise(0.35, 0.8, 700); tone(90, 0.3, 'sine', 0.4, 40); },

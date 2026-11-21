@@ -1,4 +1,7 @@
-// Sunhaven Streets — the hand-in program for the make.fun gta6-01 bounty.
+// Sunhaven Streets, version 2 — the hand-in program for the make.fun
+// gta6-01 bounty. Version 2 adds a sixth story mission, walk-in shops,
+// police who drive around buildings, and a livelier city; the game itself
+// is unchanged in shape.
 // Node 22, standard library only. The game lives in this directory's game/
 // folder: plain static files a desktop browser loads offline (game/index.html
 // and its ES modules, no library, no network request, all sound synthesised
@@ -42,4 +45,4 @@ writeFileSync(join(out, 'dossier.json'), dossier);
 // A short build summary on stdout, so a bad run is obvious at a glance:
 // how many screenshots shipped and how big the dossier came out.
 const shots = existsSync(join(out, 'screenshots')) ? readdirSync(join(out, 'screenshots')) : [];
-console.log(`Sunhaven Streets: ${shots.length} screenshots, dossier ${statSync(join(out, 'dossier.json')).size} bytes -> ${out}`);
+console.log(`Sunhaven Streets v2: ${shots.length} screenshots, dossier ${statSync(join(out, 'dossier.json')).size} bytes -> ${out}`);

@@ -1,8 +1,9 @@
 // The city of Sunhaven: a road grid, the buildings that fill each block, two
-// parks, a beach along the south edge, and the named places the missions use
-// (bank, pier, hospital, garage, hideout, market, arena). Pure data: no
-// drawing and no browser in here, so the same layout can be built from any
-// seed and re-used by collisions, traffic, the minimap and the screenshots.
+// parks, open parking lots, a beach and boardwalk along the south bay, four
+// named districts, and the named places the missions use (bank, pier,
+// hospital, garage, hideout, market, arena, cafe). Pure data: no drawing and
+// no browser in here, so the same layout can be built from any seed and
+// re-used by collisions, traffic, the minimap and the screenshots.
 import { CITY_SIZE, PALETTE, ROAD_CENTRES, ROAD_W } from './config.js';
 import { intRange, pick, range } from './random.js';
 
@@ -16,6 +17,22 @@ export const LANDMARKS = {
   arena: { name: 'Backstreet Arena', x: 750, y: 2750, kind: 'arena' },
   cafe: { name: 'Sunset Cafe', x: 1750, y: 750, kind: 'cafe' },
 };
+
+/** The four quarters of the city; the HUD names the one you are standing in. */
+export const DISTRICTS = [
+  { name: 'Downtown', x0: 0, y0: 0, x1: 1800, y1: 1800 },
+  { name: 'Palm Heights', x0: 1800, y0: 0, x1: 3600, y1: 1800 },
+  { name: 'Old Coral', x0: 0, y0: 1800, x1: 1800, y1: 3600 },
+  { name: 'The Marina', x0: 1800, y0: 1800, x1: 3600, y1: 3600 },
+];
+
+/** The district containing a point, or the first when outside them all. */
+export function districtAt(x, y) {
+  for (const d of DISTRICTS) {
+    if (x >= d.x0 && x < d.x1 && y >= d.y0 && y < d.y1) return d.name;
+  }
+  return DISTRICTS[0].name;
+}
 
 /** True when the point is on a road (within half the road width of a centre). */
 export function isOnRoad(x, y) {
@@ -35,15 +52,18 @@ export function nearestRoadCentre(v) {
 export function buildCity(random) {
   const buildings = [];
   const trees = [];
+  const lots = [];
   const parks = [
     { x: 1000, y: 1000, w: 350, h: 350, name: 'Palm Park' },
     { x: 2500, y: 2500, w: 350, h: 350, name: 'Coral Park' },
   ];
-  // Beach strip along the south edge, below the last road.
+  // Beach strip along the south edge, below the last road, with a wooden
+  // boardwalk between the sand and the water where the pier crowd gathers.
   const beach = { x: 0, y: 3425, w: CITY_SIZE, h: 175 };
+  const boardwalk = { x: 0, y: 3495, w: CITY_SIZE, h: 42 };
 
   // Landmark spots first: each named place gets a building inside the block
-  // diagonally next to it (never on a road), so regular buildings can keep clear.
+  // diagonally next to it (never on a road), so regular buildings keep clear.
   const landmarkSpots = [];
   for (const key of Object.keys(LANDMARKS)) {
     const lm = LANDMARKS[key];
@@ -52,7 +72,9 @@ export function buildCity(random) {
     landmarkSpots.push({ x: lm.x + dx, y: lm.y + dy, key });
   }
 
-  // One or two buildings per block (the square between four roads).
+  // Blocks between roads: most hold one or two buildings; a few are open
+  // parking lots instead, which breaks up the rooftops and gives the city
+  // ground-level variety (and somewhere honest to find a parked car).
   for (let bx = 0; bx < ROAD_CENTRES.length - 1; bx += 1) {
     for (let by = 0; by < ROAD_CENTRES.length - 1; by += 1) {
       const x0 = ROAD_CENTRES[bx] + ROAD_W / 2 + 18;
@@ -65,6 +87,10 @@ export function buildCity(random) {
       const inBeach = cy > beach.y;
       const nearLandmark = landmarkSpots.some((s) => Math.hypot(s.x - cx, s.y - cy) < 280);
       if (inPark || inBeach || nearLandmark) continue;
+      if (random() < 0.14) {
+        lots.push({ x: x0 + 8, y: y0 + 8, w: (x1 - x0) - 16, h: (y1 - y0) - 16, bays: intRange(random, 4, 7) });
+        continue;
+      }
       const count = random() < 0.45 ? 2 : 1;
       for (let i = 0; i < count; i += 1) {
         const w = range(random, 110, 190);
@@ -91,7 +117,7 @@ export function buildCity(random) {
     });
   }
 
-  // Palm trees: scattered in parks and along the beach.
+  // Palm trees: scattered in parks, along the beach and down the boardwalk.
   for (const p of parks) {
     for (let i = 0; i < 14; i += 1) {
       trees.push({ x: range(random, p.x + 20, p.x + p.w - 20), y: range(random, p.y + 20, p.y + p.h - 20) });
@@ -100,8 +126,11 @@ export function buildCity(random) {
   for (let i = 0; i < 26; i += 1) {
     trees.push({ x: range(random, 60, CITY_SIZE - 60), y: range(random, beach.y + 25, beach.y + 140) });
   }
+  for (let i = 0; i < 10; i += 1) {
+    trees.push({ x: 180 + i * 340 + range(random, -30, 30), y: boardwalk.y - 14 });
+  }
 
-  return { buildings, trees, parks, beach, size: CITY_SIZE };
+  return { buildings, trees, parks, beach, boardwalk, lots, size: CITY_SIZE };
 }
 
 /** Push a circle (x, y, radius) out of every building it overlaps. Mutates in place. */
